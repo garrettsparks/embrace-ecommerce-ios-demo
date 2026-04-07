@@ -49,6 +49,11 @@ jobs:
           sed -i '' 's/"RUN_SOURCE": "[^"]*"/"RUN_SOURCE": "crash-test"/' "${{ env.PROJECT_NAME }}UITests/Embrace_EcommerceUITests.swift"
           echo "RUN_SOURCE set to crash-test"
 
+      - name: Enable Embrace debug logging for crash diagnostics
+        run: |
+          sed -i '' 's/logLevel: .info/logLevel: .debug/' "${{ env.PROJECT_NAME }}/Embrace_EcommerceApp.swift"
+          echo "Embrace logLevel set to .debug"
+
       - name: Cache SPM dependencies
         uses: actions/cache@v4
         with:
@@ -103,6 +108,14 @@ jobs:
             done
           done
 
+      - name: Start simulator log capture
+        run: |
+          xcrun simctl spawn "${{ steps.setup_simulator.outputs.simulator_udid }}" log stream \
+            --predicate 'subsystem CONTAINS "embrace" OR process CONTAINS "Embrace Ecommerce"' \
+            --level debug > simulator_embrace.log 2>&1 &
+          echo $! > /tmp/log_stream_pid
+          echo "Started log stream (PID: $(cat /tmp/log_stream_pid))"
+
       - name: "Run 5 crash+flush cycles"
         run: |
           SIM_DEST="platform=iOS Simulator,id=${{ steps.setup_simulator.outputs.simulator_udid }}"
@@ -146,12 +159,22 @@ jobs:
           echo "  Results: $PASSED completed, $FAILED failed"
           echo "========================================"
 
+      - name: Stop simulator log capture
+        if: always()
+        run: |
+          kill $(cat /tmp/log_stream_pid) 2>/dev/null || true
+          echo "=== Embrace upload-related log lines ==="
+          grep -i -E "upload|uploadSpans|uploadLog|status.*[0-9]{3}|error.*upload|session.*send|unsent|crash.*report" simulator_embrace.log | tail -100 || echo "No matching lines found"
+          echo "=== Full log size: $(wc -l < simulator_embrace.log) lines ==="
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: crash-test-results
-          path: Results/
+          path: |
+            Results/
+            simulator_embrace.log
           retention-days: 3
           if-no-files-found: ignore
 

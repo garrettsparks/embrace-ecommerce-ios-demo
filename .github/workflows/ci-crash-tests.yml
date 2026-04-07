@@ -110,13 +110,12 @@ jobs:
 
       - name: Start simulator log capture
         run: |
-          # Capture all logs from the app process (Embrace_Ecommerce) at debug level.
-          # The process name in the simulator uses underscores, not spaces.
+          # Capture ALL simulator logs (no predicate) and filter afterward.
+          # Previous attempts with process-name predicates matched nothing.
           xcrun simctl spawn "${{ steps.setup_simulator.outputs.simulator_udid }}" log stream \
             --level debug \
             --style compact \
-            --predicate 'process CONTAINS "Embrace" OR processImagePath CONTAINS "Embrace"' \
-            > simulator_embrace.log 2>&1 &
+            > simulator_all.log 2>&1 &
           echo $! > /tmp/log_stream_pid
           echo "Started log stream (PID: $(cat /tmp/log_stream_pid))"
 
@@ -167,12 +166,17 @@ jobs:
         if: always()
         run: |
           kill $(cat /tmp/log_stream_pid) 2>/dev/null || true
-          echo "=== Log line count ==="
-          wc -l < simulator_embrace.log || echo "0"
-          echo "=== Upload / session / crash related lines ==="
-          grep -i -E "upload|status|session|crash|unsent|error|warning|span|encode|payload" simulator_embrace.log | tail -200 || echo "No matching lines found"
-          echo "=== First 30 lines (to verify capture is working) ==="
-          head -30 simulator_embrace.log || true
+          echo "=== Total log lines ==="
+          wc -l < simulator_all.log || echo "0"
+          echo "=== Filter to Embrace app process lines ==="
+          grep -i "Embrace" simulator_all.log > simulator_embrace.log || true
+          echo "=== Embrace log lines: $(wc -l < simulator_embrace.log) ==="
+          echo "=== Upload / session / span / crash lines ==="
+          grep -i -E "upload|status|session|crash|unsent|error|warn|span|encode|payload|emb\." simulator_embrace.log | tail -200 || echo "No matching lines"
+          echo "=== First 50 Embrace lines ==="
+          head -50 simulator_embrace.log || true
+          echo "=== Unique process names in full log ==="
+          head -500 simulator_all.log | sed 's/.*\[/[/' | sed 's/\].*/]/' | sort -u | head -20 || true
 
       - name: Upload test results
         if: always()
@@ -182,6 +186,7 @@ jobs:
           path: |
             Results/
             simulator_embrace.log
+            simulator_all.log
           retention-days: 3
           if-no-files-found: ignore
 

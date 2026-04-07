@@ -108,17 +108,6 @@ jobs:
             done
           done
 
-      - name: Start simulator log capture
-        run: |
-          # Capture ALL simulator logs (no predicate) and filter afterward.
-          # Previous attempts with process-name predicates matched nothing.
-          xcrun simctl spawn "${{ steps.setup_simulator.outputs.simulator_udid }}" log stream \
-            --level debug \
-            --style compact \
-            > simulator_all.log 2>&1 &
-          echo $! > /tmp/log_stream_pid
-          echo "Started log stream (PID: $(cat /tmp/log_stream_pid))"
-
       - name: "Run 5 crash+flush cycles"
         run: |
           SIM_DEST="platform=iOS Simulator,id=${{ steps.setup_simulator.outputs.simulator_udid }}"
@@ -127,19 +116,26 @@ jobs:
           PASSED=0
           FAILED=0
 
-          for i in 1 2 3 4 5; do
+          # Run only 1 cycle with full xcodebuild output captured for diagnostics.
+          # xcodebuild pipes the app's stdout/stderr (print/os_log/NSLog) in its output.
+          echo "--- Running crash + flush cycle 1 (with log capture) ---"
+          xcodebuild test-without-building \
+            -project "${{ env.PROJECT_NAME }}.xcodeproj" \
+            -scheme "${{ env.SCHEME_NAME }}" \
+            -destination "$SIM_DEST" \
+            -derivedDataPath "DerivedData" \
+            -only-testing:"$CRASH_TEST" \
+            -only-testing:"$FLUSH_TEST" \
+            -resultBundlePath "Results/cycle-1" 2>&1 | tee xcodebuild_cycle1.log || true
+          echo "Cycle 1: completed"
+          PASSED=$((PASSED + 1))
+          sleep 5
+
+          for i in 2 3 4 5; do
             echo ""
             echo "========================================"
             echo "  Crash cycle $i of 5"
             echo "========================================"
-
-            # Run both crash and flush in a single xcodebuild invocation.
-            # This ensures the app is relaunched (not reinstalled) between
-            # test methods, preserving the Embrace session database and
-            # KSCrash data on disk. XCTest runs methods alphabetically:
-            # testCrashA_Force runs first (crashes), then testCrashB_Flush
-            # gets a fresh app.launch() via setUp which triggers the
-            # pending crash+session upload.
             echo "--- Running crash + flush cycle ---"
             xcodebuild test-without-building \
               -project "${{ env.PROJECT_NAME }}.xcodeproj" \
@@ -149,11 +145,8 @@ jobs:
               -only-testing:"$CRASH_TEST" \
               -only-testing:"$FLUSH_TEST" \
               -resultBundlePath "Results/cycle-$i" 2>&1 || true
-
-            # Exit code 65 is expected (crash test always "fails")
             echo "Cycle $i: completed"
             PASSED=$((PASSED + 1))
-
             sleep 5
           done
 
@@ -162,21 +155,16 @@ jobs:
           echo "  Results: $PASSED completed, $FAILED failed"
           echo "========================================"
 
-      - name: Stop simulator log capture
+      - name: Analyze cycle 1 logs
         if: always()
         run: |
-          kill $(cat /tmp/log_stream_pid) 2>/dev/null || true
-          echo "=== Total log lines ==="
-          wc -l < simulator_all.log || echo "0"
-          echo "=== Filter to Embrace app process lines ==="
-          grep -i "Embrace" simulator_all.log > simulator_embrace.log || true
-          echo "=== Embrace log lines: $(wc -l < simulator_embrace.log) ==="
-          echo "=== Upload / session / span / crash lines ==="
-          grep -i -E "upload|status|session|crash|unsent|error|warn|span|encode|payload|emb\." simulator_embrace.log | tail -200 || echo "No matching lines"
-          echo "=== First 50 Embrace lines ==="
-          head -50 simulator_embrace.log || true
-          echo "=== Unique process names in full log ==="
-          head -500 simulator_all.log | sed 's/.*\[/[/' | sed 's/\].*/]/' | sort -u | head -20 || true
+          echo "=== xcodebuild log lines: $(wc -l < xcodebuild_cycle1.log) ==="
+          echo ""
+          echo "=== Embrace SDK debug output (upload/session/crash) ==="
+          grep -i -E "embrace|emb-|upload.*complete|upload.*status|session.*start|session.*end|unsent|crash.*report|sendSession|uploadSpan|uploadLog|Status: [0-9]" xcodebuild_cycle1.log | grep -v "SourcePackages\|Build/" | tail -200 || echo "No matching lines"
+          echo ""
+          echo "=== App print() output (lines with emoji markers) ==="
+          grep -E "^[^/]" xcodebuild_cycle1.log | grep -v "^$\|^Test\|^[[:space:]]*$\|^Resolve\|^Build\|^Command\|^note:\|^---" | tail -100 || echo "No app output found"
 
       - name: Upload test results
         if: always()
@@ -185,8 +173,7 @@ jobs:
           name: crash-test-results
           path: |
             Results/
-            simulator_embrace.log
-            simulator_all.log
+            xcodebuild_cycle1.log
           retention-days: 3
           if-no-files-found: ignore
 

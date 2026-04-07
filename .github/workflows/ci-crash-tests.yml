@@ -108,6 +108,16 @@ jobs:
             done
           done
 
+      - name: Start host log capture
+        run: |
+          # Simulator apps run as HOST processes. Use the host's `log stream`
+          # to capture os_log/print output. Match the app's executable name.
+          log stream --level debug --style compact \
+            --predicate 'process CONTAINS "Embrace" OR composedMessage CONTAINS "embrace" OR composedMessage CONTAINS "Embrace" OR composedMessage CONTAINS "[EMB]"' \
+            > host_embrace.log 2>&1 &
+          echo $! > /tmp/host_log_pid
+          echo "Started host log stream (PID: $(cat /tmp/host_log_pid))"
+
       - name: "Run 5 crash+flush cycles"
         run: |
           SIM_DEST="platform=iOS Simulator,id=${{ steps.setup_simulator.outputs.simulator_udid }}"
@@ -116,22 +126,7 @@ jobs:
           PASSED=0
           FAILED=0
 
-          # Run only 1 cycle with full xcodebuild output captured for diagnostics.
-          # xcodebuild pipes the app's stdout/stderr (print/os_log/NSLog) in its output.
-          echo "--- Running crash + flush cycle 1 (with log capture) ---"
-          xcodebuild test-without-building \
-            -project "${{ env.PROJECT_NAME }}.xcodeproj" \
-            -scheme "${{ env.SCHEME_NAME }}" \
-            -destination "$SIM_DEST" \
-            -derivedDataPath "DerivedData" \
-            -only-testing:"$CRASH_TEST" \
-            -only-testing:"$FLUSH_TEST" \
-            -resultBundlePath "Results/cycle-1" 2>&1 | tee xcodebuild_cycle1.log || true
-          echo "Cycle 1: completed"
-          PASSED=$((PASSED + 1))
-          sleep 5
-
-          for i in 2 3 4 5; do
+          for i in 1 2 3 4 5; do
             echo ""
             echo "========================================"
             echo "  Crash cycle $i of 5"
@@ -155,16 +150,18 @@ jobs:
           echo "  Results: $PASSED completed, $FAILED failed"
           echo "========================================"
 
-      - name: Analyze cycle 1 logs
+      - name: Analyze logs
         if: always()
         run: |
-          echo "=== xcodebuild log lines: $(wc -l < xcodebuild_cycle1.log) ==="
+          kill $(cat /tmp/host_log_pid) 2>/dev/null || true
+          sleep 2
+          echo "=== Host log lines: $(wc -l < host_embrace.log) ==="
           echo ""
-          echo "=== Embrace SDK debug output (upload/session/crash) ==="
-          grep -i -E "embrace|emb-|upload.*complete|upload.*status|session.*start|session.*end|unsent|crash.*report|sendSession|uploadSpan|uploadLog|Status: [0-9]" xcodebuild_cycle1.log | grep -v "SourcePackages\|Build/" | tail -200 || echo "No matching lines"
+          echo "=== Upload / session / crash related ==="
+          grep -i -E "upload|session|crash|unsent|span|Status:|error|warn" host_embrace.log | tail -200 || echo "No matching lines"
           echo ""
-          echo "=== App print() output (lines with emoji markers) ==="
-          grep -E "^[^/]" xcodebuild_cycle1.log | grep -v "^$\|^Test\|^[[:space:]]*$\|^Resolve\|^Build\|^Command\|^note:\|^---" | tail -100 || echo "No app output found"
+          echo "=== First 50 lines ==="
+          head -50 host_embrace.log || true
 
       - name: Upload test results
         if: always()
@@ -173,7 +170,7 @@ jobs:
           name: crash-test-results
           path: |
             Results/
-            xcodebuild_cycle1.log
+            host_embrace.log
           retention-days: 3
           if-no-files-found: ignore
 

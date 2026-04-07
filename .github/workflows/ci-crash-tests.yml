@@ -110,9 +110,13 @@ jobs:
 
       - name: Start simulator log capture
         run: |
+          # Capture all logs from the app process (Embrace_Ecommerce) at debug level.
+          # The process name in the simulator uses underscores, not spaces.
           xcrun simctl spawn "${{ steps.setup_simulator.outputs.simulator_udid }}" log stream \
-            --predicate 'subsystem CONTAINS "embrace" OR process CONTAINS "Embrace Ecommerce"' \
-            --level debug > simulator_embrace.log 2>&1 &
+            --level debug \
+            --style compact \
+            --predicate 'process CONTAINS "Embrace" OR processImagePath CONTAINS "Embrace"' \
+            > simulator_embrace.log 2>&1 &
           echo $! > /tmp/log_stream_pid
           echo "Started log stream (PID: $(cat /tmp/log_stream_pid))"
 
@@ -163,9 +167,12 @@ jobs:
         if: always()
         run: |
           kill $(cat /tmp/log_stream_pid) 2>/dev/null || true
-          echo "=== Embrace upload-related log lines ==="
-          grep -i -E "upload|uploadSpans|uploadLog|status.*[0-9]{3}|error.*upload|session.*send|unsent|crash.*report" simulator_embrace.log | tail -100 || echo "No matching lines found"
-          echo "=== Full log size: $(wc -l < simulator_embrace.log) lines ==="
+          echo "=== Log line count ==="
+          wc -l < simulator_embrace.log || echo "0"
+          echo "=== Upload / session / crash related lines ==="
+          grep -i -E "upload|status|session|crash|unsent|error|warning|span|encode|payload" simulator_embrace.log | tail -200 || echo "No matching lines found"
+          echo "=== First 30 lines (to verify capture is working) ==="
+          head -30 simulator_embrace.log || true
 
       - name: Upload test results
         if: always()

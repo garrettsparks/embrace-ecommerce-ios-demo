@@ -110,10 +110,10 @@ jobs:
 
       - name: Start host log capture
         run: |
-          # Simulator apps run as HOST processes. Use the host's `log stream`
-          # to capture os_log/print output. Match the app's executable name.
+          # SDK uses os_log with subsystem "com.embrace.logger".
+          # Debug-level os_log requires explicit --level debug to capture.
           log stream --level debug --style compact \
-            --predicate 'process CONTAINS "Embrace" OR composedMessage CONTAINS "embrace" OR composedMessage CONTAINS "Embrace" OR composedMessage CONTAINS "[EMB]"' \
+            --predicate 'subsystem == "com.embrace.logger"' \
             > host_embrace.log 2>&1 &
           echo $! > /tmp/host_log_pid
           echo "Started host log stream (PID: $(cat /tmp/host_log_pid))"

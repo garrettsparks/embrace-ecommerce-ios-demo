@@ -98,12 +98,19 @@ Push to main
 
 ## Setup Instructions
 
-### Required Repository Variables
+### Required Repository Variables and Secrets
 
-1. Go to repository **Settings**
-2. Navigate to: **Secrets and variables > Actions > Variables**
-3. Add:
-   - `APP_ID`: Your Embrace App ID
+1. Go to repository **Settings > Secrets and variables > Actions**
+2. Add a **Variable**: `APP_ID` — your 5-character Embrace App ID
+3. Add a **Secret**: `EMBRACE_API_TOKEN` — your Embrace symbol upload token
+
+### Multi-App Setup (optional)
+
+To target multiple Embrace apps, create [GitHub Environments](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment) with per-environment `APP_ID` and `EMBRACE_API_TOKEN` values, then add a repository variable:
+
+- `ENVIRONMENTS`: a JSON array of environment names, e.g. `["internal", "demo"]`
+
+If `ENVIRONMENTS` is not set, workflows run once using repo-level variables.
 
 ### Running Workflows
 

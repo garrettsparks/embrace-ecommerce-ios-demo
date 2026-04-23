@@ -11,6 +11,7 @@ import GoogleSignIn
 import Stripe
 import Firebase
 import Mixpanel
+import os.log
 
 @main
 struct Embrace_EcommerceApp: App {
@@ -33,12 +34,24 @@ struct Embrace_EcommerceApp: App {
             print("🎭 Using mock data for testing")
         }
 
+        // The Embrace SDK detects XCUITest via CommandLine.arguments[0] containing
+        // "XCTestDevices" and forces CoreData to in-memory storage (see ProcessInfo.isTesting
+        // in embrace-apple-sdk). This causes session data to be lost on crash since the
+        // in-memory store dies with the process. Patch the cached arguments to disable this.
+        let patchLog = OSLog(subsystem: "com.embrace.logger", category: "argv-patch")
+        if CommandLine.arguments[0].contains("XCTestDevices") {
+            var args = CommandLine.arguments
+            args[0] = args[0].replacingOccurrences(of: "XCTestDevices", with: "XCTestDeviceZ")
+            CommandLine.arguments = args
+            os_log("Patched argv[0] to use on-disk CoreData storage", log: patchLog, type: .info)
+        }
+
         do {
             // Initialize Firebase first (required for Firebase services)
             // Temporarily disabled to debug crash
             // configureFirebase()
             print("⚠️ Firebase configuration temporarily disabled for debugging")
-            
+
             // Initialize Embrace SDK with comprehensive options
             configureEmbrace()
             print("✅ Embrace configuration completed")
@@ -243,4 +256,5 @@ struct Embrace_EcommerceApp: App {
                 }
         }
     }
+
 }
